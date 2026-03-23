@@ -1,0 +1,44 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0c0e14;
+  --s1: #141720;
+  --s2: #1a1e2a;
+  --border: rgba(255, 255, 255, 0.06);
+  --gold: #e2b84a;
+  --gold-dim: rgba(226, 184, 74, 0.12);
+  --up: #34d399;
+  --up-dim: rgba(52, 211, 153, 0.12);
+  --dn: #f87171;
+  --dn-dim: rgba(248, 113, 113, 0.12);
+  --blue: #60a5fa;
+  --tx: #eae8e3;
+  --t2: #9a978e;
+  --t3: #5e5c56;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--tx);
+  font-family: 'Noto Sans TC', -apple-system, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+/* 讓表格可以水平滾動 */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* 載入動畫 */
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.loading-pulse { animation: pulse 1.5s ease-in-out infinite; }
