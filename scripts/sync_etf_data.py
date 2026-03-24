@@ -1,241 +1,131 @@
 """
-台股 ETF 資料同步腳本
-每天由 GitHub Actions 在盤後（14:30 TST）自動執行
-從 FinMind API 撈資料 → 寫入 Supabase
+台股 ETF 每日資料同步腳本（純 requests 版）
+每天由 GitHub Actions 在盤後自動執行
 """
 
 import os
 import sys
+import time
 import requests
 from datetime import datetime, timedelta
-from supabase import create_client
 
-# ─── 環境變數 ───
 FINMIND_TOKEN = os.environ.get("FINMIND_API_TOKEN", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 if not all([FINMIND_TOKEN, SUPABASE_URL, SUPABASE_KEY]):
-    print("❌ 缺少環境變數！請確認 FINMIND_API_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY")
-    sys.exit(1)
+    print("❌ 缺少環境變數！"); sys.exit(1)
 
-# ─── 初始化 ───
 FINMIND_BASE = "https://api.finmindtrade.com/api/v4/data"
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# 撈最近 5 天的資料（確保補到假日空缺）
+REST = f"{SUPABASE_URL}/rest/v1"
 TODAY = datetime.now().strftime("%Y-%m-%d")
-START_DATE = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+START = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+ONE_YEAR_AGO = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+DELAY = 3
 
 
-def fetch_finmind(dataset, params=None):
-    """通用 FinMind API 請求"""
-    if params is None:
-        params = {}
+def supa_headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+
+
+def supa_read():
+    return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+
+
+def fetch_fm(dataset, params):
     params["dataset"] = dataset
     headers = {"Authorization": f"Bearer {FINMIND_TOKEN}"}
-
     try:
-        resp = requests.get(FINMIND_BASE, params=params, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if data.get("msg") != "success":
-            print(f"  ⚠ FinMind 回傳錯誤: {data.get('msg', '未知')}")
-            return []
-
-        return data.get("data", [])
+        r = requests.get(FINMIND_BASE, params=params, headers=headers, timeout=30)
+        d = r.json()
+        return d.get("data", []) if d.get("msg") == "success" else []
     except Exception as e:
-        print(f"  ❌ 請求失敗: {e}")
-        return []
+        print(f"  ❌ {e}"); return []
+
+
+def upsert(table, rows, conflict):
+    if not rows: return 0
+    total = 0
+    url = f"{REST}/{table}?on_conflict={conflict}"
+    for i in range(0, len(rows), 50):
+        batch = rows[i:i+50]
+        try:
+            r = requests.post(url, headers=supa_headers(), json=batch, timeout=30)
+            if r.status_code in (200, 201): total += len(batch)
+        except: pass
+    return total
 
 
 def get_etf_ids():
-    """從 Supabase 取得所有要追蹤的 ETF 代碼"""
-    result = supabase.table("etf_info").select("id").execute()
-    return [row["id"] for row in result.data] if result.data else []
+    r = requests.get(f"{REST}/etf_info?select=id,is_distributing", headers=supa_read())
+    return r.json() if r.status_code == 200 else []
 
 
-def sync_prices(etf_ids):
-    """同步每日股價"""
-    print("\n📊 同步股價...")
-    total = 0
+print("=" * 50)
+print(f"🚀 ETF 每日同步 {TODAY}")
+print("=" * 50)
 
-    for etf_id in etf_ids:
-        data = fetch_finmind("TaiwanStockPrice", {
-            "data_id": etf_id,
-            "start_date": START_DATE,
-        })
+etfs = get_etf_ids()
+etf_ids = [e["id"] for e in etfs]
+print(f"📋 {len(etf_ids)} 檔 ETF\n")
 
-        if not data:
-            continue
+# ─── 1. 股價 ───
+print("📊 同步股價...")
+pt = 0
+for eid in etf_ids:
+    d = fetch_fm("TaiwanStockPrice", {"data_id": eid, "start_date": START})
+    if d:
+        rows = [{"etf_id": eid, "date": x["date"], "open": x.get("open"), "high": x.get("max"),
+                 "low": x.get("min"), "close": x.get("close"), "volume": x.get("Trading_Volume"),
+                 "spread": x.get("spread")} for x in d]
+        pt += upsert("etf_daily_price", rows, "etf_id,date")
+    time.sleep(DELAY)
+print(f"  ✅ {pt} 筆\n")
 
-        rows = []
-        for d in data:
-            rows.append({
-                "etf_id": etf_id,
-                "date": d["date"],
-                "open": d.get("open"),
-                "high": d.get("max"),
-                "low": d.get("min"),
-                "close": d.get("close"),
-                "volume": d.get("Trading_Volume"),
-                "spread": d.get("spread"),
-            })
+# ─── 2. 法人 ───
+print("🏛️ 同步法人...")
+it = 0
+for eid in etf_ids:
+    d = fetch_fm("TaiwanStockInstitutionalInvestorsBuySell", {"data_id": eid, "start_date": START})
+    if d:
+        rows = [{"etf_id": eid, "date": x["date"], "investor_type": x.get("name", ""),
+                 "buy": x.get("buy", 0), "sell": x.get("sell", 0)} for x in d]
+        it += upsert("etf_institutional", rows, "etf_id,date,investor_type")
+    time.sleep(DELAY)
+print(f"  ✅ {it} 筆\n")
 
-        if rows:
-            try:
-                supabase.table("etf_daily_price").upsert(
-                    rows, on_conflict="etf_id,date"
-                ).execute()
-                total += len(rows)
-                print(f"  ✅ {etf_id}: {len(rows)} 筆")
-            except Exception as e:
-                print(f"  ❌ {etf_id}: {e}")
+# ─── 3. 計算殖利率（從配息 + 股價）───
+print("📈 計算殖利率...")
+vt = 0
+for e in etfs:
+    eid = e["id"]
+    is_dist = e.get("is_distributing", True)
 
-    return total
+    # 最新股價
+    pr = requests.get(f"{REST}/etf_daily_price?select=close,date&etf_id=eq.{eid}&order=date.desc&limit=1", headers=supa_read())
+    prices = pr.json() if pr.status_code == 200 else []
+    if not prices: continue
+    price = prices[0]["close"]
+    date = prices[0]["date"]
 
+    if not is_dist:
+        yld = 0
+    else:
+        dr = requests.get(f"{REST}/etf_dividend?select=cash_dividend&etf_id=eq.{eid}&ex_date=gte.{ONE_YEAR_AGO}", headers=supa_read())
+        divs = dr.json() if dr.status_code == 200 else []
+        total_div = sum(d.get("cash_dividend", 0) or 0 for d in divs)
+        yld = round(total_div / price * 100, 2) if price > 0 and total_div > 0 else None
 
-def sync_valuations(etf_ids):
-    """同步估值指標（PER / PBR / 殖利率）"""
-    print("\n📈 同步估值指標...")
-    total = 0
+    row = {"etf_id": eid, "date": date, "dividend_yield": yld, "per": None, "pbr": None}
+    vt += upsert("etf_valuation", [row], "etf_id,date")
+print(f"  ✅ {vt} 筆\n")
 
-    for etf_id in etf_ids:
-        data = fetch_finmind("TaiwanStockPER", {
-            "data_id": etf_id,
-            "start_date": START_DATE,
-        })
-
-        if not data:
-            continue
-
-        rows = []
-        for d in data:
-            rows.append({
-                "etf_id": etf_id,
-                "date": d["date"],
-                "dividend_yield": d.get("dividend_yield"),
-                "per": d.get("PER"),
-                "pbr": d.get("PBR"),
-            })
-
-        if rows:
-            try:
-                supabase.table("etf_valuation").upsert(
-                    rows, on_conflict="etf_id,date"
-                ).execute()
-                total += len(rows)
-                print(f"  ✅ {etf_id}: {len(rows)} 筆")
-            except Exception as e:
-                print(f"  ❌ {etf_id}: {e}")
-
-    return total
-
-
-def sync_institutional(etf_ids):
-    """同步三大法人買賣超"""
-    print("\n🏛️ 同步法人買賣超...")
-    total = 0
-
-    for etf_id in etf_ids:
-        data = fetch_finmind("TaiwanStockInstitutionalInvestorsBuySell", {
-            "data_id": etf_id,
-            "start_date": START_DATE,
-        })
-
-        if not data:
-            continue
-
-        rows = []
-        for d in data:
-            rows.append({
-                "etf_id": etf_id,
-                "date": d["date"],
-                "investor_type": d.get("name", ""),
-                "buy": d.get("buy", 0),
-                "sell": d.get("sell", 0),
-            })
-
-        if rows:
-            try:
-                supabase.table("etf_institutional").upsert(
-                    rows, on_conflict="etf_id,date,investor_type"
-                ).execute()
-                total += len(rows)
-                print(f"  ✅ {etf_id}: {len(rows)} 筆")
-            except Exception as e:
-                print(f"  ❌ {etf_id}: {e}")
-
-    return total
-
-
-def sync_dividends(etf_ids):
-    """同步配息紀錄（不需要每天跑，但跑了也不會重複）"""
-    print("\n💰 同步配息紀錄...")
-    total = 0
-
-    for etf_id in etf_ids:
-        data = fetch_finmind("TaiwanStockDividend", {
-            "data_id": etf_id,
-            "start_date": "2020-01-01",
-        })
-
-        if not data:
-            continue
-
-        rows = []
-        for d in data:
-            ex_date = d.get("date")
-            if not ex_date:
-                continue
-            rows.append({
-                "etf_id": etf_id,
-                "ex_date": ex_date,
-                "cash_dividend": d.get("CashEarningsDistribution", 0),
-                "stock_dividend": d.get("StockEarningsDistribution", 0),
-                "year": d.get("year", ""),
-            })
-
-        if rows:
-            try:
-                supabase.table("etf_dividend").upsert(
-                    rows, on_conflict="etf_id,ex_date"
-                ).execute()
-                total += len(rows)
-                print(f"  ✅ {etf_id}: {len(rows)} 筆")
-            except Exception as e:
-                print(f"  ❌ {etf_id}: {e}")
-
-    return total
-
-
-# ─── 主程式 ───
-if __name__ == "__main__":
-    print("=" * 50)
-    print(f"🚀 ETF 資料同步開始")
-    print(f"📅 日期範圍: {START_DATE} ~ {TODAY}")
-    print("=" * 50)
-
-    # 取得要同步的 ETF 清單
-    etf_ids = get_etf_ids()
-    print(f"\n📋 共 {len(etf_ids)} 檔 ETF: {', '.join(etf_ids)}")
-
-    if not etf_ids:
-        print("❌ Supabase 的 etf_info 表是空的，請先新增 ETF 資料")
-        sys.exit(1)
-
-    # 逐項同步
-    price_count = sync_prices(etf_ids)
-    val_count = sync_valuations(etf_ids)
-    inst_count = sync_institutional(etf_ids)
-    div_count = sync_dividends(etf_ids)
-
-    # 結果摘要
-    print("\n" + "=" * 50)
-    print("✅ 同步完成！")
-    print(f"   股價:   {price_count} 筆")
-    print(f"   估值:   {val_count} 筆")
-    print(f"   法人:   {inst_count} 筆")
-    print(f"   配息:   {div_count} 筆")
-    print("=" * 50)
+# ─── 結果 ───
+print("=" * 50)
+print(f"✅ 同步完成！股價:{pt} 法人:{it} 估值:{vt}")
+print("=" * 50)

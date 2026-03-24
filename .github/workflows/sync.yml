@@ -2,15 +2,13 @@ name: Sync ETF Data
 
 on:
   schedule:
-    # 每天台灣時間 14:30 執行（UTC+8，所以 UTC 是 06:30）
+    # 每天台灣時間 14:30（UTC 06:30）
     - cron: '30 6 * * *'
   workflow_dispatch:
-    # 也可以手動觸發（在 GitHub Actions 頁面按 Run workflow）
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests supabase
+        run: pip install requests
 
       - name: Run sync script
         env:

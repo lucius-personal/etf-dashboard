@@ -421,6 +421,195 @@ function PortfolioPanel({ etfMap }) {
   );
 }
 
+/* ═══════ Returns Bar (年化報酬) ═══════ */
+
+function ReturnsBar({ prices }) {
+  if (prices.length < 10) return null;
+  const latest = prices[prices.length - 1]?.close;
+  if (!latest) return null;
+
+  function getReturn(daysAgo) {
+    const target = new Date();
+    target.setDate(target.getDate() - daysAgo);
+    const targetStr = target.toISOString().split('T')[0];
+    // Find closest date
+    let best = null;
+    for (const p of prices) {
+      if (p.date <= targetStr) best = p;
+    }
+    if (!best || !best.close) return null;
+    return Math.round(((latest - best.close) / best.close) * 10000) / 100;
+  }
+
+  const periods = [
+    { label: '1月', days: 22 },
+    { label: '3月', days: 66 },
+    { label: '6月', days: 132 },
+    { label: '1年', days: 252 },
+    { label: '3年', days: 756 },
+  ];
+
+  return (
+    <Card style={{ padding: '14px 16px', marginBottom: 12 }}>
+      <div style={{ fontSize: 10, color: C.t3, marginBottom: 10, letterSpacing: 0.5 }}>區間報酬率</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {periods.map(p => {
+          const ret = getReturn(p.days);
+          if (ret === null) return (
+            <div key={p.label} style={{ flex: 1, minWidth: 52, textAlign: 'center', padding: '8px 4px', background: C.s2, borderRadius: 8 }}>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 3 }}>{p.label}</div>
+              <div style={{ fontSize: 13, color: C.t3 }}>—</div>
+            </div>
+          );
+          const isUp = ret >= 0;
+          return (
+            <div key={p.label} style={{ flex: 1, minWidth: 52, textAlign: 'center', padding: '8px 4px', background: isUp ? C.upDim : C.dnDim, borderRadius: 8 }}>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 3 }}>{p.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: isUp ? C.up : C.dn }}>
+                {isUp ? '+' : ''}{ret}%
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+/* ═══════ Quick P&L Calculator (損益計算器) ═══════ */
+
+function QuickCalc({ etfMap, allEtfs }) {
+  const [calcId, setCalcId] = useState('0050');
+  const [calcShares, setCalcShares] = useState('');
+  const [calcCost, setCalcCost] = useState('');
+
+  const etf = etfMap[calcId];
+  const shares = Number(calcShares) || 0;
+  const cost = Number(calcCost) || 0;
+  const currentPrice = etf?.close || 0;
+  const totalCost = shares * cost;
+  const totalValue = shares * currentPrice;
+  const pl = totalValue - totalCost;
+  const plPct = totalCost > 0 ? ((pl / totalCost) * 100).toFixed(2) : '0';
+  const hasResult = shares > 0 && cost > 0 && currentPrice > 0;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Input */}
+      <Card style={{ padding: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.tx, marginBottom: 14 }}>
+          快速損益計算器
+          <span style={{ fontWeight: 400, color: C.t3, fontSize: 10, marginLeft: 8 }}>不需登入</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <select value={calcId} onChange={e => setCalcId(e.target.value)} style={{
+            flex: 1, minWidth: 120, padding: '10px 12px', background: C.s2,
+            border: `1px solid ${C.border}`, borderRadius: 10, color: C.tx,
+            fontSize: 13, fontFamily: 'inherit',
+          }}>
+            {allEtfs.map(e => (
+              <option key={e.id} value={e.id}>{e.id} {e.name}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: C.t3, marginBottom: 4 }}>買入價</div>
+            <input type="number" placeholder="例: 187.5" value={calcCost}
+              onChange={e => setCalcCost(e.target.value)}
+              style={{ width: '100%', padding: '10px 12px', background: C.s2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.tx, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: C.t3, marginBottom: 4 }}>股數</div>
+            <input type="number" placeholder="例: 5000" value={calcShares}
+              onChange={e => setCalcShares(e.target.value)}
+              style={{ width: '100%', padding: '10px 12px', background: C.s2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.tx, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+          </div>
+        </div>
+        {currentPrice > 0 && (
+          <div style={{ fontSize: 11, color: C.t2, marginTop: 8 }}>
+            {calcId} 目前收盤價：<span style={{ color: C.tx, fontWeight: 500 }}>${currentPrice}</span>
+          </div>
+        )}
+      </Card>
+
+      {/* Result */}
+      {hasResult && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <Card style={{ padding: 16 }}>
+            <div style={{ fontSize: 10, color: C.t3, marginBottom: 6 }}>投入成本</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: C.tx }}>${totalCost.toLocaleString()}</div>
+          </Card>
+          <Card style={{ padding: 16 }}>
+            <div style={{ fontSize: 10, color: C.t3, marginBottom: 6 }}>目前市值</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: C.tx }}>${Math.round(totalValue).toLocaleString()}</div>
+          </Card>
+          <Card style={{ padding: 16, gridColumn: '1 / -1', textAlign: 'center' }}>
+            <div style={{ fontSize: 10, color: C.t3, marginBottom: 8 }}>未實現損益</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: pl >= 0 ? C.up : C.dn, letterSpacing: -1 }}>
+              {pl >= 0 ? '+' : ''}{Math.round(pl).toLocaleString()}
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: pl >= 0 ? C.up : C.dn, marginTop: 4 }}>
+              {pl >= 0 ? '+' : ''}{plPct}%
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {!hasResult && (
+        <Card style={{ padding: 32, textAlign: 'center' }}>
+          <div style={{ fontSize: 13, color: C.t3 }}>輸入買入價和股數，即時計算損益</div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ═══════ Daily Summary (每日程式化摘要) ═══════ */
+
+function DailySummary({ pinned, etfMap, institutional }) {
+  if (!pinned.length) return null;
+
+  // 找出今日漲最多和跌最多
+  let bestId = null, bestPct = -Infinity;
+  let worstId = null, worstPct = Infinity;
+  pinned.forEach(id => {
+    const e = etfMap[id];
+    if (!e || e.spread == null) return;
+    const pct = e.close ? (e.spread / (e.close - e.spread)) * 100 : 0;
+    if (pct > bestPct) { bestPct = pct; bestId = id; }
+    if (pct < worstPct) { worstPct = pct; worstId = id; }
+  });
+
+  // 找出外資淨買超最大的
+  const foreignNet = {};
+  institutional.forEach(d => {
+    if (d.investor_type === 'Foreign_Investor') {
+      foreignNet[d.etf_id] = (foreignNet[d.etf_id] || 0) + ((d.buy || 0) - (d.sell || 0));
+    }
+  });
+  let topForeignId = null, topForeignAmt = 0;
+  Object.entries(foreignNet).forEach(([id, amt]) => {
+    if (amt > topForeignAmt) { topForeignAmt = amt; topForeignId = id; }
+  });
+
+  const msgs = [];
+  if (bestId && bestPct > 0) msgs.push(`📈 漲幅最大：${bestId} +${bestPct.toFixed(1)}%`);
+  if (worstId && worstPct < 0) msgs.push(`📉 跌幅最大：${worstId} ${worstPct.toFixed(1)}%`);
+  if (topForeignId && topForeignAmt > 0) msgs.push(`🏛️ 外資買超：${topForeignId} +${Math.round(topForeignAmt).toLocaleString()}張`);
+
+  if (msgs.length === 0) return null;
+
+  return (
+    <Card style={{ padding: '14px 16px', marginBottom: 16 }}>
+      <div style={{ fontSize: 10, color: C.t3, marginBottom: 8, letterSpacing: 0.5 }}>今日快報</div>
+      {msgs.map((m, i) => (
+        <div key={i} style={{ fontSize: 13, color: C.tx, lineHeight: 2 }}>{m}</div>
+      ))}
+    </Card>
+  );
+}
+
 /* ═══════ MAIN DASHBOARD ═══════ */
 
 export default function Dashboard() {
@@ -520,15 +709,16 @@ export default function Dashboard() {
       if (!selectedId) return;
 
       const [priceRes, valRes, instRes, divRes] = await Promise.all([
-        supabase.from('etf_daily_price').select('*').eq('etf_id', selectedId).order('date', { ascending: true }).limit(60),
-        supabase.from('etf_valuation').select('*').eq('etf_id', selectedId).order('date', { ascending: true }).limit(60),
-        supabase.from('etf_institutional').select('*').eq('etf_id', selectedId).order('date', { ascending: true }).limit(60),
-        supabase.from('etf_dividend').select('*').eq('etf_id', selectedId).order('ex_date', { ascending: false }).limit(12),
+        supabase.from('etf_daily_price').select('*').eq('etf_id', selectedId).order('date', { ascending: false }).limit(800),
+        supabase.from('etf_valuation').select('*').eq('etf_id', selectedId).order('date', { ascending: false }).limit(60),
+        supabase.from('etf_institutional').select('*').eq('etf_id', selectedId).order('date', { ascending: false }).limit(120),
+        supabase.from('etf_dividend').select('*').eq('etf_id', selectedId).order('ex_date', { ascending: false }).limit(20),
       ]);
 
-      setPrices(priceRes.data || []);
-      setValuations(valRes.data || []);
-      setInstitutional(instRes.data || []);
+      // Reverse to ascending for charts (newest last)
+      setPrices((priceRes.data || []).reverse());
+      setValuations((valRes.data || []).reverse());
+      setInstitutional((instRes.data || []).reverse());
       setDividends(divRes.data || []);
     }
     loadDetail();
@@ -567,6 +757,7 @@ export default function Dashboard() {
     { key: 'investors', label: '法人' },
     { key: 'valuation', label: '估值' },
     { key: 'dividend', label: '配息' },
+    { key: 'calc', label: '計算' },
     { key: 'portfolio', label: '持倉' },
   ];
 
@@ -636,6 +827,9 @@ export default function Dashboard() {
           {/* Watchlist */}
           <WatchlistTable pinned={pinned} etfMap={etfMap} selectedId={selectedId} onSelect={setSelectedId} />
 
+          {/* Daily Summary */}
+          <DailySummary pinned={pinned} etfMap={etfMap} institutional={institutional} />
+
           {/* Dropdown */}
           <ETFDropdown categories={categories} selectedId={selectedId} onSelect={setSelectedId} pinned={pinned} onTogglePin={togglePin} />
 
@@ -674,10 +868,16 @@ export default function Dashboard() {
         <div style={{ marginBottom: 16 }}><TabBar tabs={tabs} active={tab} onChange={setTab} /></div>
 
         {/* Panels */}
-        {tab === 'chart' && <ChartPanel prices={prices} />}
+        {tab === 'chart' && (
+          <>
+            <ReturnsBar prices={prices} />
+            <ChartPanel prices={prices.slice(-120)} />
+          </>
+        )}
         {tab === 'investors' && <InvestorPanel data={institutional} />}
         {tab === 'valuation' && <ValuationPanel etfInfo={etfMap[selectedId]} valuations={valuations} />}
         {tab === 'dividend' && <DividendPanel dividends={dividends} etfInfo={etfMap[selectedId]} />}
+        {tab === 'calc' && <QuickCalc etfMap={etfMap} allEtfs={etfList} />}
         {tab === 'portfolio' && (user ? <PortfolioPanel etfMap={etfMap} /> : (
           <Card style={{ padding: 40, textAlign: 'center' }}>
             <div style={{ fontSize: 14, color: C.t2, marginBottom: 16 }}>登入後即可使用持倉記帳功能</div>
