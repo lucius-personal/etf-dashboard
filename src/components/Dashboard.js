@@ -434,9 +434,33 @@ export default function Dashboard() {
   const [dividends, setDividends] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [user, setUser] = useState(null);
 
   // Build etfMap: { '0050': { id, name, close, spread, yield, volume, ... } }
   const [etfMap, setEtfMap] = useState({});
+
+  // Auth: listen for login/logout
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user || null);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  async function handleLogin() {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setUser(null);
+  }
 
   // Load ETF list from Supabase
   useEffect(() => {
@@ -566,13 +590,47 @@ export default function Dashboard() {
               <div style={{ width: 7, height: 7, borderRadius: '50%', background: C.up, boxShadow: `0 0 10px ${C.up}` }} />
               <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: 2.5, color: C.gold, textTransform: 'uppercase' }}>台股 ETF 儀表板</span>
             </div>
-            <button onClick={handleSync} disabled={syncing} style={{
-              padding: '6px 14px', fontSize: 11, fontFamily: 'inherit', fontWeight: 600,
-              background: syncing ? C.s2 : C.goldDim, color: syncing ? C.t3 : C.gold,
-              border: `1px solid ${C.goldGlow}`, borderRadius: 10, cursor: syncing ? 'wait' : 'pointer',
-            }}>
-              {syncing ? '同步中...' : '⟳ 同步資料'}
-            </button>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button onClick={handleSync} disabled={syncing} style={{
+                padding: '6px 14px', fontSize: 11, fontFamily: 'inherit', fontWeight: 600,
+                background: syncing ? C.s2 : C.goldDim, color: syncing ? C.t3 : C.gold,
+                border: `1px solid ${C.goldGlow}`, borderRadius: 10, cursor: syncing ? 'wait' : 'pointer',
+              }}>
+                {syncing ? '同步中...' : '⟳ 同步'}
+              </button>
+              {user ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: '50%', overflow: 'hidden',
+                    border: `1.5px solid ${C.gold}`, flexShrink: 0,
+                  }}>
+                    {user.user_metadata?.avatar_url ? (
+                      <img src={user.user_metadata.avatar_url} alt="" width={28} height={28} style={{ borderRadius: '50%' }} />
+                    ) : (
+                      <div style={{ width: 28, height: 28, background: C.goldDim, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, color: C.gold }}>
+                        {(user.email || '?')[0].toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={handleLogout} style={{
+                    padding: '6px 10px', fontSize: 10, fontFamily: 'inherit',
+                    background: 'none', color: C.t3, border: `1px solid ${C.border}`,
+                    borderRadius: 8, cursor: 'pointer',
+                  }}>
+                    登出
+                  </button>
+                </div>
+              ) : (
+                <button onClick={handleLogin} style={{
+                  padding: '6px 14px', fontSize: 11, fontFamily: 'inherit', fontWeight: 600,
+                  background: C.s2, color: C.tx, border: `1px solid ${C.border}`,
+                  borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                  登入
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Watchlist */}
@@ -620,7 +678,19 @@ export default function Dashboard() {
         {tab === 'investors' && <InvestorPanel data={institutional} />}
         {tab === 'valuation' && <ValuationPanel etfInfo={etfMap[selectedId]} valuations={valuations} />}
         {tab === 'dividend' && <DividendPanel dividends={dividends} etfInfo={etfMap[selectedId]} />}
-        {tab === 'portfolio' && <PortfolioPanel etfMap={etfMap} />}
+        {tab === 'portfolio' && (user ? <PortfolioPanel etfMap={etfMap} /> : (
+          <Card style={{ padding: 40, textAlign: 'center' }}>
+            <div style={{ fontSize: 14, color: C.t2, marginBottom: 16 }}>登入後即可使用持倉記帳功能</div>
+            <button onClick={handleLogin} style={{
+              padding: '10px 24px', fontSize: 13, fontFamily: 'inherit', fontWeight: 600,
+              background: C.gold, color: C.bg, border: 'none', borderRadius: 10, cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+              用 Google 帳號登入
+            </button>
+          </Card>
+        ))}
 
         {/* Footer */}
         <div style={{ marginTop: 24, padding: '14px 16px', background: C.s1, borderRadius: 14, border: `1px solid ${C.border}`, fontSize: 11, color: C.t3, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
