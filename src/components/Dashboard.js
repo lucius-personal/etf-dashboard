@@ -235,9 +235,10 @@ function InvestorPanel({ data }) {
   data.forEach(d => {
     if (!byDate[d.date]) byDate[d.date] = { date: d.date.slice(5) };
     const net = (d.buy || 0) - (d.sell || 0);
-    if (d.investor_type?.includes('外資')) byDate[d.date]['外資'] = net;
-    else if (d.investor_type?.includes('投信')) byDate[d.date]['投信'] = net;
-    else if (d.investor_type?.includes('自營商')) byDate[d.date]['自營商'] = net;
+    if (d.investor_type === 'Foreign_Investor') byDate[d.date]['外資'] = (byDate[d.date]['外資'] || 0) + net;
+    else if (d.investor_type === 'Foreign_Dealer_Self') byDate[d.date]['外資'] = (byDate[d.date]['外資'] || 0) + net;
+    else if (d.investor_type === 'Investment_Trust') byDate[d.date]['投信'] = (byDate[d.date]['投信'] || 0) + net;
+    else if (d.investor_type === 'Dealer_self' || d.investor_type === 'Dealer_Hedging') byDate[d.date]['自營商'] = (byDate[d.date]['自營商'] || 0) + net;
   });
   const chartData = Object.values(byDate).slice(-15);
 
